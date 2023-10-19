@@ -9,3 +9,4 @@ cdk.out
 
 .idea/
 package-lock.json
+!lambda/*.js
