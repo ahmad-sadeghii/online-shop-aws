@@ -4,7 +4,16 @@ const crypto = require('crypto');
 
 exports.handler = async (event) => {
     console.log("New Event:", event);
-    const { info: { fieldName }, arguments } = event;
+    const { info: { fieldName }, arguments, identity } = event;
+
+    const userGroups = identity && identity.groups || [];
+
+    const isAdmin = userGroups.includes('Admins');
+
+    if (!isAdmin) {
+        // A normal user is trying to access admin mutations
+        throw new Error('Forbidden: You do not have permission to perform this operation');
+    }
 
     switch (fieldName) {
         case 'createProduct':

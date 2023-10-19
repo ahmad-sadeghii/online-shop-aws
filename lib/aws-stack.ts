@@ -2,6 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import * as appsync from 'aws-cdk-lib/aws-appsync';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as cognito from 'aws-cdk-lib/aws-cognito';
 
 export class AwsStack extends cdk.Stack {
   constructor(scope: cdk.App, id: string, props?: cdk.StackProps) {
@@ -21,10 +22,37 @@ export class AwsStack extends cdk.Stack {
       nonKeyAttributes: ['gs1pk', 'gs1sk', 'data'],
     });
 
+    // Cognito
+    const userPool = new cognito.UserPool(this, 'UserPool', {
+      userPoolName: 'OnlineShopAwsUserPool',
+      signInAliases: {
+        username: true,
+        email: true,
+      },
+    });
+
+    // Creating user pool client
+    const userPoolClient = new cognito.UserPoolClient(this, 'UserPoolClient', {
+      userPool,
+      authFlows: {
+        userPassword: true,
+        userSrp: true,
+      },
+    });
+
     // Create the AppSync API
     const api = new appsync.GraphqlApi(this, 'OnlineShopAWS', {
       name: 'OnlineShopAWS',
-      schema: appsync.SchemaFile.fromAsset('graphql/schema.graphql')
+      schema: appsync.SchemaFile.fromAsset('graphql/schema.graphql'),
+      authorizationConfig: {
+        defaultAuthorization: {
+          authorizationType: appsync.AuthorizationType.USER_POOL,
+          userPoolConfig: {
+            userPool,
+            appIdClientRegex: userPoolClient.userPoolClientId
+          },
+        },
+      },
     });
 
     // Create resolvers for the mutations
@@ -96,9 +124,16 @@ export class AwsStack extends cdk.Stack {
     api.grantMutation(mutationHandler);
 
     table.grantReadWriteData(mutationHandler);
+    table.grantReadData(queryHandler);
+
+    // Output the User Pool ID to the stack outputs
+    new cdk.CfnOutput(this, 'UserPoolId', {
+      value: userPool.userPoolId,
+    });
 
     cdk.Tags.of(table).add("Owner", "ahmad.sadeghi@trilogy.com");
     cdk.Tags.of(mutationHandler).add("Owner", "ahmad.sadeghi@trilogy.com");
     cdk.Tags.of(queryHandler).add("Owner", "ahmad.sadeghi@trilogy.com");
+    cdk.Tags.of(userPool).add("Owner", "ahmad.sadeghi@trilogy.com");
   }
 }
