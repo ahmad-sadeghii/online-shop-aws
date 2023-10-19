@@ -3,12 +3,15 @@
   mutation: Mutation
 }
 
+scalar LocalDateTime
+
 type Mutation {
   createCategory(input: CreateProductCategoryInput!): ProductCategory
   createProduct(input: CreateProductInput!): Product
   createSupplier(input: CreateSupplierInput!): Supplier
   deleteProduct(input: DeleteProductInput!): Boolean
   updateProduct(input: UpdateProductInput!): Product
+  placeOrder(input: OrderInput): Order
 }
 
 type Product {
@@ -37,6 +40,22 @@ type Query {
 type Supplier {
   Id: ID!
   Name: String!
+}
+
+type Order {
+  Id: ID!
+  CustomerEmail: String!
+  CreatedAt: LocalDateTime
+  AddressCountry: String!
+  AddressCity: String!
+  AddressCounty: String!
+  AddressStreet: String!
+}
+
+type OrderDetail {
+  OrderId: ID
+  Product: Product
+  Quantity: Int!
 }
 
 input CreateProductCategoryInput {
@@ -71,4 +90,17 @@ input UpdateProductInput {
   Price: Float
   SupplierId: ID
   Weight: Float
+}
+
+input OrderInput {
+  Country: String!
+  City: String!
+  Street: String!
+  OrderDate: LocalDateTime!
+  Details: [OrderDetailInput!]!
+}
+
+input OrderDetailInput {
+  ProductId: ID!
+  Quantity: Int!
 }

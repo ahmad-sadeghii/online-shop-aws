@@ -75,9 +75,20 @@ export class AwsStack extends cdk.Stack {
       },
     });
 
+    // Create resolvers for the orders
+    const orderHandler = new lambda.Function(this, 'OrderHandler', {
+      runtime: lambda.Runtime.NODEJS_16_X,
+      handler: 'order.handler',
+      code: lambda.Code.fromAsset('lambda'),
+      environment: {
+        SINGLE_TABLE_NAME: table.tableName,
+      },
+    });
+
     // Add a data sources for the Lambda functions
     const lambdaDs = api.addLambdaDataSource('LambdaDataSource', mutationHandler);
     const lambdaQueryDs = api.addLambdaDataSource('QueriesDataSource', queryHandler);
+    const lambdaOrderDs = api.addLambdaDataSource('OrderDataSource', orderHandler);
 
     // Create resolvers
     lambdaDs.createResolver("CreateProductResolver",{
@@ -105,6 +116,11 @@ export class AwsStack extends cdk.Stack {
       fieldName: 'createSupplier',
     });
 
+    lambdaOrderDs.createResolver("PlaceOrderResolver", {
+      typeName: 'Mutation',
+      fieldName: 'placeOrder',
+    });
+
     lambdaQueryDs.createResolver("getCategoriesResolver", {
       typeName: 'Query',
       fieldName: 'getCategories',
@@ -122,8 +138,10 @@ export class AwsStack extends cdk.Stack {
 
     // Connect the resolvers to the Lambda function
     api.grantMutation(mutationHandler);
+    api.grantMutation(orderHandler);
 
     table.grantReadWriteData(mutationHandler);
+    table.grantReadWriteData(orderHandler);
     table.grantReadData(queryHandler);
 
     // Output the User Pool ID to the stack outputs
@@ -134,6 +152,7 @@ export class AwsStack extends cdk.Stack {
     cdk.Tags.of(table).add("Owner", "ahmad.sadeghi@trilogy.com");
     cdk.Tags.of(mutationHandler).add("Owner", "ahmad.sadeghi@trilogy.com");
     cdk.Tags.of(queryHandler).add("Owner", "ahmad.sadeghi@trilogy.com");
+    cdk.Tags.of(orderHandler).add("Owner", "ahmad.sadeghi@trilogy.com");
     cdk.Tags.of(userPool).add("Owner", "ahmad.sadeghi@trilogy.com");
   }
 }
