@@ -3,6 +3,8 @@ import * as appsync from 'aws-cdk-lib/aws-appsync';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
+import {NodejsFunction} from "aws-cdk-lib/aws-lambda-nodejs";
+import * as iam from 'aws-cdk-lib/aws-iam';
 
 export class AwsStack extends cdk.Stack {
   constructor(scope: cdk.App, id: string, props?: cdk.StackProps) {
@@ -13,7 +15,6 @@ export class AwsStack extends cdk.Stack {
       sortKey: { name: 'sk', type: dynamodb.AttributeType.STRING },
     });
 
-    // Define the GS1 index
     table.addGlobalSecondaryIndex({
       indexName: 'gs1',
       partitionKey: { name: 'gs1pk', type: dynamodb.AttributeType.STRING },
@@ -76,14 +77,30 @@ export class AwsStack extends cdk.Stack {
     });
 
     // Create resolvers for the orders
-    const orderHandler = new lambda.Function(this, 'OrderHandler', {
+    const orderHandler = new NodejsFunction(this, 'OrderHandler', {
       runtime: lambda.Runtime.NODEJS_16_X,
-      handler: 'order.handler',
-      code: lambda.Code.fromAsset('lambda'),
+      entry: 'lambda/order.js',
       environment: {
         SINGLE_TABLE_NAME: table.tableName,
       },
+      bundling: {
+        loader: {'.html': 'text'}
+      }
     });
+
+    // Grant the necessary SES permissions to the Lambda function's role
+    const sesPolicy = new iam.Policy(this, 'SESPolicy', {
+      statements: [
+        new iam.PolicyStatement({
+          actions: ['ses:SendEmail', 'ses:SendRawEmail'],
+          resources: ['*'],  // This allows sending emails to/from any email address
+          effect: iam.Effect.ALLOW,
+        }),
+      ],
+    });
+
+    // Attach the policy to the Lambda function's role
+    orderHandler.role?.attachInlinePolicy(sesPolicy);
 
     // Add a data sources for the Lambda functions
     const lambdaDs = api.addLambdaDataSource('LambdaDataSource', mutationHandler);
