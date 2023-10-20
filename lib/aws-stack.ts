@@ -5,6 +5,9 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import {NodejsFunction} from "aws-cdk-lib/aws-lambda-nodejs";
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as events from 'aws-cdk-lib/aws-events';
+import * as targets from 'aws-cdk-lib/aws-events-targets';
 
 export class AwsStack extends cdk.Stack {
   constructor(scope: cdk.App, id: string, props?: cdk.StackProps) {
@@ -157,6 +160,40 @@ export class AwsStack extends cdk.Stack {
     api.grantMutation(mutationHandler);
     api.grantMutation(orderHandler);
 
+    // Create a S3 Bucket
+    const reportBucket = new s3.Bucket(this, 'ReportBucket', {
+      versioned: true,
+    });
+
+    const reportGenerator = new NodejsFunction(this, 'ReportGenerator', {
+      runtime: lambda.Runtime.NODEJS_16_X,
+      entry: 'lambda/report.js',
+      environment: {
+        SINGLE_TABLE_NAME: table.tableName,
+      },
+      bundling: {
+        loader: {'.html': 'text'}
+      }
+    });
+
+    // Grant the necessary permissions
+    reportGenerator.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['s3:PutObject', 's3:GetObject'],
+      resources: [`${reportBucket.bucketArn}/*`],
+    }));
+
+    reportGenerator.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['dynamodb:Query'],
+      resources: [table.tableArn],
+    }));
+
+    // Create a daily rule
+    const dailyRule = new events.Rule(this, 'DailyRule', {
+      schedule: events.Schedule.cron({ minute: '0', hour: '0' }),
+    });
+
+    dailyRule.addTarget(new targets.LambdaFunction(reportGenerator));
+
     table.grantReadWriteData(mutationHandler);
     table.grantReadWriteData(orderHandler);
     table.grantReadData(queryHandler);
@@ -171,5 +208,7 @@ export class AwsStack extends cdk.Stack {
     cdk.Tags.of(queryHandler).add("Owner", "ahmad.sadeghi@trilogy.com");
     cdk.Tags.of(orderHandler).add("Owner", "ahmad.sadeghi@trilogy.com");
     cdk.Tags.of(userPool).add("Owner", "ahmad.sadeghi@trilogy.com");
+    cdk.Tags.of(reportBucket).add("Owner", "ahmad.sadeghi@trilogy.com");
+    cdk.Tags.of(reportGenerator).add("Owner", "ahmad.sadeghi@trilogy.com");
   }
 }

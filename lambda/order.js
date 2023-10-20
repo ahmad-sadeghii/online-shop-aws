@@ -9,7 +9,7 @@ exports.handler = async (event) => {
     console.log("New Event:", event);
     const customerEmail = event.identity.claims.email;
     const { input: { Country, City, County, Street, Details } } = event.arguments;
-    const { username } = event.identity;
+    const { username, sub } = event.identity;
 
     const orderDate = new Date();
 
@@ -20,6 +20,7 @@ exports.handler = async (event) => {
         pk: `ORDER#`,
         sk: `ORDER#${id}`,
         Id: id,
+        CustomerId: sub,
         CustomerEmail: customerEmail,
         AddressCountry: Country,
         AddressCity: City,
@@ -27,7 +28,7 @@ exports.handler = async (event) => {
         AddressStreet: Street,
         CreatedAt: orderDate.toISOString(),
         gs1pk: "ORDERSBYDATE",
-        gs1sk: `ORDERDATE#${orderDate.getDate().toString()}`,
+        gs1sk: `ORDERDATE#${orderDate.toISOString().split('T')[0]}`,
     };
 
     const orderDetailsItems = Details.map((detail, index) => ({
@@ -36,8 +37,8 @@ exports.handler = async (event) => {
         OrderId: id,
         ProductId: detail.ProductId,
         Quantity: detail.Quantity,
-        gs1pk: `ORDER#${id}`,
-        gs1sk: `DETAIL#${id}#${index}`,
+        gs1pk: `ORDERBYDATE`,
+        gs1sk: `ORDERDETAIL#${orderDate.toISOString().split('T')[0]}`,
     }));
 
     const params = {
@@ -89,9 +90,6 @@ exports.handler = async (event) => {
     };
 
     const htmlContent = compiledTemplate(data);
-
-    console.log(orderReceivedEmail);
-    console.log(htmlContent);
 
     const emailParams = {
         Source: "ahmad.sadeghi@trilogy.com",

@@ -24,6 +24,7 @@
     "aws-cdk-lib": "2.101.0",
     "constructs": "^10.0.0",
     "dynamodb-onetable": "^2.7.1",
-    "handlebars": "^4.7.8"
+    "handlebars": "^4.7.8",
+    "puppeteer": "^21.4.0"
   }
 }
