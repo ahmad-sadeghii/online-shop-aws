@@ -3,8 +3,6 @@
   mutation: Mutation
 }
 
-scalar LocalDateTime
-
 type Mutation {
   createCategory(input: CreateProductCategoryInput!): ProductCategory
   createProduct(input: CreateProductInput!): Product
@@ -45,7 +43,7 @@ type Supplier {
 type Order {
   Id: ID!
   CustomerEmail: String!
-  CreatedAt: LocalDateTime
+  CreatedAt: AWSDateTime!
   AddressCountry: String!
   AddressCity: String!
   AddressCounty: String!
@@ -95,8 +93,8 @@ input UpdateProductInput {
 input OrderInput {
   Country: String!
   City: String!
+  County: String!
   Street: String!
-  OrderDate: LocalDateTime!
   Details: [OrderDetailInput!]!
 }
 
