@@ -54,7 +54,7 @@ exports.handler = async (event) => {
 
     const compiledTemplate = Handlebars.compile(orderReceivedEmail);
 
-    // Step 1: Construct BatchGetItem parameters
+    // Construct BatchGetItem parameters
     const keys = Details.map(detail => ({
         pk: `PRODUCT#`,
         sk: `PRODUCT#${detail.ProductId}`

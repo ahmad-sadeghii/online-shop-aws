@@ -13,7 +13,7 @@ export class AwsStack extends cdk.Stack {
   constructor(scope: cdk.App, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    const table = new dynamodb.Table(this, 'OnlineShopSingleTableAWS', {
+    const table = new dynamodb.Table(this, 'OnlineShopTable', {
       partitionKey: { name: 'pk', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'sk', type: dynamodb.AttributeType.STRING },
     });
@@ -22,8 +22,7 @@ export class AwsStack extends cdk.Stack {
       indexName: 'gs1',
       partitionKey: { name: 'gs1pk', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'gs1sk', type: dynamodb.AttributeType.STRING },
-      projectionType: dynamodb.ProjectionType.INCLUDE,
-      nonKeyAttributes: ['gs1pk', 'gs1sk', 'data'],
+      projectionType: dynamodb.ProjectionType.ALL,
     });
 
     // Cognito
@@ -167,12 +166,19 @@ export class AwsStack extends cdk.Stack {
 
     const reportGenerator = new NodejsFunction(this, 'ReportGenerator', {
       runtime: lambda.Runtime.NODEJS_16_X,
+      timeout: cdk.Duration.minutes(3),
+      memorySize: 1024,
       entry: 'lambda/report.js',
       environment: {
         SINGLE_TABLE_NAME: table.tableName,
+        BUCKET_NAME: reportBucket.bucketName,
       },
       bundling: {
-        loader: {'.html': 'text'}
+        loader: {'.html': 'text'},
+        externalModules: [
+          "aws-sdk",
+        ],
+        nodeModules: ["@sparticuz/chromium"],
       }
     });
 
@@ -183,8 +189,8 @@ export class AwsStack extends cdk.Stack {
     }));
 
     reportGenerator.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['dynamodb:Query'],
-      resources: [table.tableArn],
+      actions: ['dynamodb:Query', 'dynamodb:BatchGetItem'],
+      resources: [table.tableArn, `${table.tableArn}/index/*`],
     }));
 
     // Create a daily rule

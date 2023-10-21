@@ -1,8 +1,7 @@
 const AWS = require('aws-sdk');
 const Handlebars = require('handlebars');
-const puppeteer = require('puppeteer');
-const fs = require('fs').promises;
-const path = require('path');
+import puppeteer from "puppeteer-core";
+const chromium = require("@sparticuz/chromium");
 const dynamoDB = new AWS.DynamoDB.DocumentClient();
 const s3 = new AWS.S3();
 import reportEmailTemplate from './templates/daily-order-report.html';
@@ -33,10 +32,22 @@ async function getOrdersFromOrderDetails(dateString) {
 }
 
 async function getProductsFromOrderDetails(orderDetails) {
-    const productKeys = orderDetails.map(detail => ({
-        pk: `PRODUCT#`,
-        sk: `PRODUCT#${detail.ProductId}`
-    }));
+    const seenProductIds = new Set();
+    const productKeys = [];
+
+    orderDetails.forEach(detail => {
+        const productId = detail.ProductId;
+        if (!seenProductIds.has(productId)) {
+            productKeys.push({
+                pk: `PRODUCT#`,
+                sk: `PRODUCT#${productId}`
+            });
+            seenProductIds.add(productId);
+        }
+    });
+
+    console.log("Order details:", orderDetails);
+    console.log("Product Keys:", productKeys);
 
     const getProductParams = {
         RequestItems: {
@@ -62,7 +73,13 @@ async function generateReportHTML(reportData) {
 }
 
 async function generatePDF(html) {
-    const browser = await puppeteer.launch();
+    const browser = await puppeteer.launch({
+        executablePath: await chromium.executablePath(),
+        headless: chromium.headless,
+        ignoreHTTPSErrors: true,
+        defaultViewport: chromium.defaultViewport,
+        args: [...chromium.args, "--hide-scrollbars", "--disable-web-security"],
+    });
     const page = await browser.newPage();
     await page.setContent(html);
     const pdf = await page.pdf({ format: 'A4' });
@@ -89,7 +106,7 @@ exports.handler = async (event) => {
         IndexName: 'gs1',
         KeyConditionExpression: 'gs1pk = :gs1pk AND gs1sk = :gs1sk',
         ExpressionAttributeValues: {
-            ':gs1pk': 'ORDERSBYDATE',
+            ':gs1pk': 'ORDERBYDATE',
             ':gs1sk': `ORDERDETAIL#${dateString}`,
         },
     };
@@ -114,11 +131,14 @@ exports.handler = async (event) => {
                 email: orders[detail.OrderId]?.CustomerEmail,
                 shippingAddress: orders[detail.OrderId]?.Address,
                 productName: products[detail.ProductId]?.Name,
+                quantity: detail.Quantity,
                 pricePerItem: products[detail.ProductId]?.Price,
-                totalPrice: products[detail.ProductId]?.Price * detail.Quantity
+                totalPrice: parseFloat((products[detail.ProductId]?.Price * detail.Quantity).toFixed(2))
             }));
 
-            reportData.grandTotal = reportData.orders.reduce((sum, report) => sum + report.totalPrice);
+            reportData.grandTotal = reportData.orders.reduce((sum, report) => parseFloat(sum) + parseFloat(report.totalPrice));
+
+            console.log(reportData);
 
             const html = await generateReportHTML(reportData);
             const pdf = await generatePDF(html);
@@ -127,7 +147,7 @@ exports.handler = async (event) => {
             await storeReport(pdf, fileName);
             console.log('Report generated and stored in S3 successfully');
         } else {
-            console.log('No orders found for the specified date');
+            console.log(`No orders found for the specified date ${dateString}`);
         }
     } catch (error) {
         console.error('Error generating report:', error);

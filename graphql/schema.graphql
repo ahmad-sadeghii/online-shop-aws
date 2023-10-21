@@ -42,6 +42,7 @@ type Supplier {
 
 type Order {
   Id: ID!
+  CustomerId: String!
   CustomerEmail: String!
   CreatedAt: AWSDateTime!
   AddressCountry: String!
