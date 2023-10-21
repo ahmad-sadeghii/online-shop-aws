@@ -3,7 +3,9 @@ const dynamoDB = new AWS.DynamoDB.DocumentClient();
 const crypto= require("crypto");
 const Handlebars = require('handlebars');
 const ses = new AWS.SES();
+const sns = new AWS.SNS();
 import orderReceivedEmail from './templates/order-received-email.html';
+import shipmentApprovalNotification from './templates/shipment-approval-request.txt';
 
 exports.handler = async (event) => {
     console.log("New Event:", event);
@@ -78,8 +80,6 @@ exports.handler = async (event) => {
         return acc;
     }, {});
 
-    console.log(productNames);
-
     const data = {
         order_id: id,
         customer_name: username,
@@ -113,6 +113,17 @@ exports.handler = async (event) => {
     };
 
     await ses.sendEmail(emailParams).promise();
+
+    const stepFunctions = new AWS.StepFunctions();
+    const executionParams = {
+        stateMachineArn: process.env.ORDER_APPROVAL_STATE_MACHINE_ARN,
+        input: JSON.stringify({
+            orderId: id,
+            customerName: username
+        }),
+    };
+
+    await stepFunctions.startExecution(executionParams).promise();
 
     return order;
 };

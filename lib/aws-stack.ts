@@ -11,6 +11,9 @@ import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as snsSubscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as s3n from 'aws-cdk-lib/aws-s3-notifications'
+import * as stepfunctions from 'aws-cdk-lib/aws-stepfunctions';
+import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
+import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 
 export class AwsStack extends cdk.Stack {
   constructor(scope: cdk.App, id: string, props?: cdk.StackProps) {
@@ -71,6 +74,11 @@ export class AwsStack extends cdk.Stack {
       },
     });
 
+    // For sending a new order for owner
+    const shipmentApprovalTopic = new sns.Topic(this, 'OnlineShopShipmentApprovalTopic');
+
+    shipmentApprovalTopic.addSubscription(new snsSubscriptions.EmailSubscription('ahmad.sadeghi@trilogy.com'));
+
     // Create resolvers for the queries
     const queryHandler = new lambda.Function(this, 'QueryHandler', {
       runtime: lambda.Runtime.NODEJS_16_X,
@@ -78,18 +86,130 @@ export class AwsStack extends cdk.Stack {
       code: lambda.Code.fromAsset('lambda'),
       environment: {
         SINGLE_TABLE_NAME: table.tableName,
+      }
+    });
+
+    // Step functions
+    const approvalLambda = new NodejsFunction(this, 'ApprovalLambda', {
+      runtime: lambda.Runtime.NODEJS_16_X,
+      entry: 'lambda/shipment-approval.ts',
+      environment: {
+        SINGLE_TABLE_NAME: table.tableName,
       },
     });
 
+    const approvalApi = new apigateway.RestApi(this, 'ApprovalApi', {
+      restApiName: 'Approval Service',
+      defaultCorsPreflightOptions: {
+        allowOrigins: apigateway.Cors.ALL_ORIGINS,
+        allowMethods: ['GET'],
+      },
+    });
+
+    const approvalLambdaIntegration = new apigateway.LambdaIntegration(approvalLambda, {
+      requestTemplates: { "application/json": '{ "statusCode": "200" }' },
+    });
+
+    approvalApi.root.addMethod('GET', approvalLambdaIntegration);
+
+    const sendConfirmationEmailLambda = new NodejsFunction(this, 'SendConfirmationEmailLambda', {
+      runtime: lambda.Runtime.NODEJS_16_X,
+      entry: 'lambda/sendConfirmationEmail.ts',
+      environment: {
+        APPROVAL_API_URL: approvalApi.url,
+        SHIPMENT_APPROVAL_TOPIC_ARN: shipmentApprovalTopic.topicArn,
+      }
+    });
+
+    // Define the Lambda function to handle approval/rejection
+    const approvalHandlerLambda = new NodejsFunction(this, 'ApprovalHandlerLambda', {
+      runtime: lambda.Runtime.NODEJS_16_X,
+      entry: 'lambda/approvalHandler.ts',
+    });
+
+    const rejectedHandlerLambda = new NodejsFunction(this, 'RejectedHandlerLambda', {
+      runtime: lambda.Runtime.NODEJS_16_X,
+      entry: 'lambda/rejectedHandler.ts',
+    });
+
+    // Define the State Machine
+    // const orderApprovalStateMachine = new stepfunctions.StateMachine(this, 'OrderApprovalStateMachine', {
+    //   definition: new tasks.LambdaInvoke(this, 'Send Confirmation Email', {
+    //     lambdaFunction: sendConfirmationEmailLambda,
+    //     integrationPattern: stepfunctions.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
+    //     payload: stepfunctions.TaskInput.fromObject({
+    //       'orderId.$': '$.orderId',
+    //       'customerName.$': '$.customerName',
+    //       "taskToken": stepfunctions.JsonPath.taskToken,
+    //     }),
+    //   })
+    //       .next(new stepfunctions.Wait(this, 'Wait for Approval', {
+    //         time: stepfunctions.WaitTime.duration(cdk.Duration.hours(48)),
+    //       }))
+    //       .next(new stepfunctions.Choice(this, 'Was Order Approved?')
+    //           .when(stepfunctions.Condition.stringEquals('$.Payload.result', 'approved'),
+    //               new stepfunctions.Pass(this, 'Order Approved')
+    //           )
+    //           .otherwise(new tasks.LambdaInvoke(this, 'Handle Rejection', {
+    //             lambdaFunction: approvalHandlerLambda,
+    //             payload: stepfunctions.TaskInput.fromObject({
+    //               'orderId.$': '$.orderId',
+    //               'approval': false,
+    //             }),
+    //           })
+    //               .next(new stepfunctions.Fail(this, 'Fail', { cause: 'Order was not approved' })))
+    //       ),
+    // });
+
+    const orderApprovalStateMachine = new stepfunctions.StateMachine(this, 'OrderApprovalStateMachine', {
+      definition: new tasks.LambdaInvoke(this, 'Send Confirmation Email', {
+        lambdaFunction: sendConfirmationEmailLambda,
+        integrationPattern: stepfunctions.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
+        payload: stepfunctions.TaskInput.fromObject({
+          'orderId.$': '$.orderId',
+          'customerName.$': '$.customerName',
+          "taskToken": stepfunctions.JsonPath.taskToken,
+        }),
+      })
+          .next(new stepfunctions.Wait(this, 'Wait for Approval', {
+            time: stepfunctions.WaitTime.duration(cdk.Duration.hours(48)),
+          })
+              .next(new tasks.LambdaInvoke(this, 'Handle Rejection After Timeout', {
+                lambdaFunction: rejectedHandlerLambda,
+                payload: stepfunctions.TaskInput.fromObject({
+                  'orderId.$': '$.orderId',
+                  'approval': false,
+                }),
+              })
+                  .next(new stepfunctions.Choice(this, 'Was Order Approved?')
+                      .when(stepfunctions.Condition.stringEquals('$.Payload.result', 'approved'),
+                          new tasks.LambdaInvoke(this, 'Handle Approval', {
+                            lambdaFunction: approvalHandlerLambda,
+                            payload: stepfunctions.TaskInput.fromObject({
+                              'orderId.$': '$.orderId',
+                              'approval': true,
+                            }),
+                          })
+                      )
+                      .otherwise(new tasks.LambdaInvoke(this, 'Handle Rejection', {
+                        lambdaFunction: rejectedHandlerLambda,
+                        payload: stepfunctions.TaskInput.fromObject({
+                          'orderId.$': '$.orderId',
+                          'approval': false,
+                        }),
+                      }))
+                  ))),
+    });
     // Create resolvers for the orders
     const orderHandler = new NodejsFunction(this, 'OrderHandler', {
       runtime: lambda.Runtime.NODEJS_16_X,
       entry: 'lambda/order.js',
       environment: {
         SINGLE_TABLE_NAME: table.tableName,
+        ORDER_APPROVAL_STATE_MACHINE_ARN: orderApprovalStateMachine.stateMachineArn,
       },
       bundling: {
-        loader: {'.html': 'text'}
+        loader: {'.html': 'text', '.txt': 'text'}
       }
     });
 
@@ -106,6 +226,16 @@ export class AwsStack extends cdk.Stack {
 
     // Attach the policy to the Lambda function's role
     orderHandler.role?.attachInlinePolicy(sesPolicy);
+
+    orderHandler.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['states:StartExecution'],
+      resources: [orderApprovalStateMachine.stateMachineArn],
+    }));
+
+    sendConfirmationEmailLambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['sns:Publish'],
+      resources: [shipmentApprovalTopic.topicArn],
+    }));
 
     // Add a data sources for the Lambda functions
     const lambdaDs = api.addLambdaDataSource('LambdaDataSource', mutationHandler);
@@ -237,7 +367,7 @@ export class AwsStack extends cdk.Stack {
     }));
 
     reportNotificationLambda.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['dynamodb:Query'],
+      actions: ['dynamodb:GetItem'],
       resources: [table.tableArn],
     }));
 
@@ -255,5 +385,7 @@ export class AwsStack extends cdk.Stack {
     cdk.Tags.of(reportGenerator).add("Owner", "ahmad.sadeghi@trilogy.com");
     cdk.Tags.of(reportNotificationTopic).add("Owner", "ahmad.sadeghi@trilogy.com");
     cdk.Tags.of(reportNotificationLambda).add("Owner", "ahmad.sadeghi@trilogy.com");
+    cdk.Tags.of(orderApprovalStateMachine).add("Owner", "ahmad.sadeghi@trilogy.com");
+    cdk.Tags.of(shipmentApprovalTopic).add("Owner", "ahmad.sadeghi@trilogy.com");
   }
 }
