@@ -72,6 +72,21 @@ async function generateReportHTML(reportData) {
     return template(reportData);
 }
 
+async function storeDataForNotification(reportData) {
+    const params = {
+        TableName: process.env.SINGLE_TABLE_NAME,
+        Item: {
+            pk: "REPORTDATA#",
+            sk: "REPORTDATA#",
+            ReportDate: reportData.currentDate,
+            TotalOrders: reportData.orders.length,
+            GrandTotal: reportData.grandTotal
+        }
+    };
+
+    await dynamoDB.put(params).promise();
+}
+
 async function generatePDF(html) {
     const browser = await puppeteer.launch({
         executablePath: await chromium.executablePath(),
@@ -136,7 +151,7 @@ exports.handler = async (event) => {
                 totalPrice: parseFloat((products[detail.ProductId]?.Price * detail.Quantity).toFixed(2))
             }));
 
-            reportData.grandTotal = reportData.orders.reduce((sum, report) => parseFloat(sum) + parseFloat(report.totalPrice));
+            reportData.grandTotal = parseFloat(reportData.orders.reduce((sum, report) => parseFloat(sum) + parseFloat(report.totalPrice), 0).toFixed(2));
 
             console.log(reportData);
 
@@ -144,8 +159,11 @@ exports.handler = async (event) => {
             const pdf = await generatePDF(html);
             const fileName = `reports/report-${dateString}.pdf`;
 
+            await storeDataForNotification(reportData);
+
             await storeReport(pdf, fileName);
             console.log('Report generated and stored in S3 successfully');
+
         } else {
             console.log(`No orders found for the specified date ${dateString}`);
         }

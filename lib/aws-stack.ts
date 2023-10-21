@@ -8,6 +8,9 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
+import * as sns from 'aws-cdk-lib/aws-sns';
+import * as snsSubscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
+import * as s3n from 'aws-cdk-lib/aws-s3-notifications'
 
 export class AwsStack extends cdk.Stack {
   constructor(scope: cdk.App, id: string, props?: cdk.StackProps) {
@@ -189,7 +192,7 @@ export class AwsStack extends cdk.Stack {
     }));
 
     reportGenerator.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['dynamodb:Query', 'dynamodb:BatchGetItem'],
+      actions: ['dynamodb:Query', 'dynamodb:BatchGetItem', 'dynamodb:putItem'],
       resources: [table.tableArn, `${table.tableArn}/index/*`],
     }));
 
@@ -204,6 +207,40 @@ export class AwsStack extends cdk.Stack {
     table.grantReadWriteData(orderHandler);
     table.grantReadData(queryHandler);
 
+    // SNS Topic
+    const reportNotificationTopic = new sns.Topic(this, 'ReportNotificationTopic');
+
+    reportNotificationTopic.addSubscription(new snsSubscriptions.EmailSubscription('ahmad.sadeghi@trilogy.com'));
+
+    // Lambda function to be triggered
+    const reportNotificationLambda = new NodejsFunction(this, 'ReportNotificationLambda', {
+      runtime: lambda.Runtime.NODEJS_16_X,
+      entry: 'lambda/s3Notification.ts',
+      environment: {
+        SNS_TOPIC_ARN: reportNotificationTopic.topicArn,
+        SINGLE_TABLE_NAME: table.tableName,
+      },
+      bundling: {
+        loader: {'.txt': 'text'},
+      },
+    });
+
+    reportBucket.addEventNotification(s3.EventType.OBJECT_CREATED_PUT, new s3n.LambdaDestination(reportNotificationLambda));
+
+    // Grant the Lambda function permissions to read from the S3 bucket
+    reportBucket.grantRead(reportNotificationLambda);
+
+    // Grant the Lambda function permission to publish to the SNS topic
+    reportNotificationLambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['sns:Publish'],
+      resources: [reportNotificationTopic.topicArn],
+    }));
+
+    reportNotificationLambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['dynamodb:Query'],
+      resources: [table.tableArn],
+    }));
+
     // Output the User Pool ID to the stack outputs
     new cdk.CfnOutput(this, 'UserPoolId', {
       value: userPool.userPoolId,
@@ -216,5 +253,7 @@ export class AwsStack extends cdk.Stack {
     cdk.Tags.of(userPool).add("Owner", "ahmad.sadeghi@trilogy.com");
     cdk.Tags.of(reportBucket).add("Owner", "ahmad.sadeghi@trilogy.com");
     cdk.Tags.of(reportGenerator).add("Owner", "ahmad.sadeghi@trilogy.com");
+    cdk.Tags.of(reportNotificationTopic).add("Owner", "ahmad.sadeghi@trilogy.com");
+    cdk.Tags.of(reportNotificationLambda).add("Owner", "ahmad.sadeghi@trilogy.com");
   }
 }
