@@ -1,0 +1,105 @@
+﻿schema {
+  query: Query
+  mutation: Mutation
+}
+
+type Mutation {
+  createCategory(input: CreateProductCategoryInput!): ProductCategory
+  createProduct(input: CreateProductInput!): Product
+  createSupplier(input: CreateSupplierInput!): Supplier
+  deleteProduct(input: DeleteProductInput!): Boolean
+  updateProduct(input: UpdateProductInput!): Product
+  placeOrder(input: OrderInput): Order
+}
+
+type Product {
+  CategoryId: ID!
+  Description: String!
+  Id: ID!
+  ImageUrl: String
+  Name: String!
+  Price: Float!
+  SupplierId: ID!
+  Weight: Float!
+}
+
+type ProductCategory {
+  Description: String
+  Id: ID!
+  Name: String!
+}
+
+type Query {
+  getCategories: [ProductCategory]
+  getProduct(Id: ID!): Product
+  getProducts(CategoryId: ID!): [Product]
+}
+
+type Supplier {
+  Id: ID!
+  Name: String!
+}
+
+type Order {
+  Id: ID!
+  CustomerId: String!
+  CustomerEmail: String!
+  CreatedAt: AWSDateTime!
+  AddressCountry: String!
+  AddressCity: String!
+  AddressCounty: String!
+  AddressStreet: String!
+}
+
+type OrderDetail {
+  OrderId: ID
+  Product: Product
+  Quantity: Int!
+}
+
+input CreateProductCategoryInput {
+  Description: String
+  Name: String!
+}
+
+input CreateProductInput {
+  CategoryId: ID!
+  Description: String!
+  ImageUrl: String
+  Name: String!
+  Price: Float!
+  SupplierId: ID!
+  Weight: Float!
+}
+
+input CreateSupplierInput {
+  Name: String!
+}
+
+input DeleteProductInput {
+  Id: ID!
+}
+
+input UpdateProductInput {
+  CategoryId: ID
+  Description: String
+  Id: ID!
+  ImageUrl: String
+  Name: String
+  Price: Float
+  SupplierId: ID
+  Weight: Float
+}
+
+input OrderInput {
+  Country: String!
+  City: String!
+  County: String!
+  Street: String!
+  Details: [OrderDetailInput!]!
+}
+
+input OrderDetailInput {
+  ProductId: ID!
+  Quantity: Int!
+}
