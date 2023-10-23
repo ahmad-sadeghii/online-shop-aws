@@ -1,15 +1,40 @@
-const AWS = require('aws-sdk');
-const dynamoDB = new AWS.DynamoDB.DocumentClient();
+import { DynamoDB } from 'aws-sdk';
 
-exports.handler = async (event) => {
+const dynamoDB = new DynamoDB.DocumentClient();
+
+interface Event {
+    info: { fieldName: string };
+    arguments: {
+        Id?: string;
+        CategoryId?: string;
+    };
+}
+
+interface Product {
+    Id: string;
+    Name: string;
+    Description: string;
+    Price: number;
+    Weight: number;
+    SupplierId: string;
+    ImageUrl: string;
+}
+
+interface Category {
+    Id: string;
+    Name: string;
+    Description: string;
+}
+
+exports.handler = async (event: Event) => {
     console.log("New Event:", event);
-    const { info: { fieldName }, arguments } = event;
+    const { info: { fieldName }, arguments: args } = event;
 
     switch (fieldName) {
         case 'getProduct':
-            return await getProduct(arguments.Id);
+            return await getProduct(args.Id);
         case 'getProducts':
-            return await getProducts(arguments.CategoryId);
+            return await getProducts(args.CategoryId);
         case 'getCategories':
             return await getCategories();
         default:
@@ -17,7 +42,9 @@ exports.handler = async (event) => {
     }
 };
 
-async function getProduct(Id) {
+const getProduct = async (Id?: string): Promise<Product | null> => {
+    if (!Id) throw new Error('Product ID is required');
+
     const params = {
         TableName: process.env.SINGLE_TABLE_NAME,
         Key: {
@@ -45,9 +72,11 @@ async function getProduct(Id) {
         console.error('Error getting product:', error.message);
         throw error;
     }
-}
+};
 
-const getProducts = async (CategoryId) => {
+const getProducts = async (CategoryId?: string): Promise<Product[]> => {
+    if (!CategoryId) throw new Error('Category ID is required');
+
     const params = {
         TableName: process.env.SINGLE_TABLE_NAME,
         KeyConditionExpression: 'pk = :pk AND begins_with(sk, :sk)',
@@ -70,9 +99,9 @@ const getProducts = async (CategoryId) => {
         SupplierId: item.SupplierId,
         ImageUrl: item.ImageUrl,
     }));
-}
+};
 
-const getCategories = async () => {
+const getCategories = async (): Promise<Category[]> => {
     const params = {
         TableName: process.env.SINGLE_TABLE_NAME,
         KeyConditionExpression: 'pk = :pk',

@@ -66,10 +66,9 @@ export class AwsStack extends cdk.Stack {
     });
 
     // Create resolvers for the mutations
-    const mutationHandler = new lambda.Function(this, 'MutationHandler', {
+    const mutationHandler = new NodejsFunction(this, 'MutationHandler', {
       runtime: lambda.Runtime.NODEJS_16_X,
-      handler: 'mutations.handler',
-      code: lambda.Code.fromAsset('lambda'),
+      entry: 'lambda/mutations.ts',
       environment: {
         SINGLE_TABLE_NAME: table.tableName,
       },
@@ -81,10 +80,9 @@ export class AwsStack extends cdk.Stack {
     shipmentApprovalTopic.addSubscription(new snsSubscriptions.EmailSubscription('ahmad.sadeghi@trilogy.com'));
 
     // Create resolvers for the queries
-    const queryHandler = new lambda.Function(this, 'QueryHandler', {
+    const queryHandler = new NodejsFunction(this, 'QueryHandler', {
       runtime: lambda.Runtime.NODEJS_16_X,
-      handler: 'queries.handler',
-      code: lambda.Code.fromAsset('lambda'),
+      entry: 'lambda/queries.ts',
       environment: {
         SINGLE_TABLE_NAME: table.tableName,
       }
@@ -255,7 +253,7 @@ export class AwsStack extends cdk.Stack {
     // Create resolvers for the orders
     const orderHandler = new NodejsFunction(this, 'OrderHandler', {
       runtime: lambda.Runtime.NODEJS_16_X,
-      entry: 'lambda/order.js',
+      entry: 'lambda/order.ts',
       environment: {
         SINGLE_TABLE_NAME: table.tableName,
         ORDER_APPROVAL_STATE_MACHINE_ARN: orderApprovalStateMachine.stateMachineArn,
@@ -357,7 +355,7 @@ export class AwsStack extends cdk.Stack {
       runtime: lambda.Runtime.NODEJS_16_X,
       timeout: cdk.Duration.minutes(3),
       memorySize: 1024,
-      entry: 'lambda/report.js',
+      entry: 'lambda/report.ts',
       environment: {
         SINGLE_TABLE_NAME: table.tableName,
         BUCKET_NAME: reportBucket.bucketName,

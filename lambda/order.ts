@@ -1,19 +1,42 @@
-const AWS = require('aws-sdk');
-const dynamoDB = new AWS.DynamoDB.DocumentClient();
-const crypto= require("crypto");
-const Handlebars = require('handlebars');
-const ses = new AWS.SES();
-const sns = new AWS.SNS();
+import { DynamoDB, SES, SNS, StepFunctions } from 'aws-sdk';
+import Handlebars from 'handlebars';
+import crypto from 'crypto';
 import orderReceivedEmail from './templates/order-received-email.html';
 
-exports.handler = async (event) => {
+const dynamoDB = new DynamoDB.DocumentClient();
+const ses = new SES();
+
+interface Detail {
+    ProductId: string;
+    Quantity: number;
+}
+
+interface Event {
+    identity: {
+        claims: {
+            email: string;
+        };
+        username: string;
+        sub: string;
+    };
+    arguments: {
+        input: {
+            Country: string;
+            City: string;
+            County: string;
+            Street: string;
+            Details: Detail[];
+        };
+    };
+}
+
+exports.handler = async (event: Event) => {
     console.log("New Event:", event);
     const customerEmail = event.identity.claims.email;
     const { input: { Country, City, County, Street, Details } } = event.arguments;
     const { username, sub } = event.identity;
 
     const orderDate = new Date();
-
 
     const id = crypto.createHash('sha256').update(customerEmail + Date.now()).digest('hex');
 
@@ -44,7 +67,7 @@ exports.handler = async (event) => {
 
     const params = {
         RequestItems: {
-            [process.env.SINGLE_TABLE_NAME]: [
+            [process.env.SINGLE_TABLE_NAME as string]: [
                 { PutRequest: { Item: order } },
                 ...orderDetailsItems.map(detail => ({ PutRequest: { Item: detail } })),
             ],
@@ -63,7 +86,7 @@ exports.handler = async (event) => {
 
     const getProductParams = {
         RequestItems: {
-            [process.env.SINGLE_TABLE_NAME]: {
+            [process.env.SINGLE_TABLE_NAME as string]: {
                 Keys: keys
             }
         }
@@ -71,9 +94,9 @@ exports.handler = async (event) => {
 
     // Step 2: Call batchGetItem
     const result = await dynamoDB.batchGet(getProductParams).promise();
-    const items = result.Responses[process.env.SINGLE_TABLE_NAME];
+    const items = result.Responses[process.env.SINGLE_TABLE_NAME as string];
 
-    const productNames = items.reduce((acc, item) => {
+    const productNames = items.reduce((acc: { [key: string]: string }, item) => {
         const { Id, Name } = item;
         acc[Id] = Name;
         return acc;
@@ -85,7 +108,7 @@ exports.handler = async (event) => {
         customer_email: customerEmail,
         shipping_address: `${Street}, ${County}, ${City}, ${Country}`,
         order_details: Details.map(detail => ({ "product_name": productNames[detail.ProductId], quantity: detail.Quantity })),
-        total_amount: items.reduce((sum, item) => sum + item.Price, 0) + " EUR",
+        total_amount: items.reduce((sum: number, item) => sum + item.Price, 0) + " EUR",
     };
 
     const htmlContent = compiledTemplate(data);
@@ -113,9 +136,9 @@ exports.handler = async (event) => {
 
     await ses.sendEmail(emailParams).promise();
 
-    const stepFunctions = new AWS.StepFunctions();
+    const stepFunctions = new StepFunctions();
     const executionParams = {
-        stateMachineArn: process.env.ORDER_APPROVAL_STATE_MACHINE_ARN,
+        stateMachineArn: process.env.ORDER_APPROVAL_STATE_MACHINE_ARN as string,
         input: JSON.stringify({
             orderId: id,
             customerName: username

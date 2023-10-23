@@ -1,40 +1,64 @@
-const AWS = require('aws-sdk');
-const dynamoDB = new AWS.DynamoDB.DocumentClient();
-const crypto = require('crypto');
+import { DynamoDB } from 'aws-sdk';
+import * as crypto from 'crypto';
 
-exports.handler = async (event) => {
+const dynamoDB = new DynamoDB.DocumentClient();
+
+interface Event {
+    info: { fieldName: string };
+    arguments: any;
+    identity: { groups: string[] } | null;
+}
+
+interface ProductInput {
+    Name: string;
+    Description: string;
+    CategoryId: string;
+    SupplierId: string;
+    Price: number;
+    Weight: number;
+}
+
+interface CategoryInput {
+    Name: string;
+    Description: string;
+}
+
+interface SupplierInput {
+    Name: string;
+}
+
+export const handler = async (event: Event) => {
     console.log("New Event:", event);
-    const { info: { fieldName }, arguments, identity } = event;
+    const { info: { fieldName }, arguments: args, identity } = event;
 
     const userGroups = identity && identity.groups || [];
 
     const isAdmin = userGroups.includes('Admins');
 
     if (!isAdmin) {
-        // A normal user is trying to access admin mutations
         throw new Error('Forbidden: You do not have permission to perform this operation');
     }
 
     switch (fieldName) {
         case 'createProduct':
-            return createProduct(arguments.input);
+            return createProduct(args.input);
         case 'updateProduct':
-            return updateProduct(arguments.input);
+            return updateProduct(args.input);
         case 'deleteProduct':
-            return deleteProduct(arguments.input);
+            return deleteProduct(args.input);
         case 'createCategory':
-            return createCategory(arguments.input);
+            return createCategory(args.input);
         case 'createSupplier':
-            return createSupplier(arguments.input);
+            return createSupplier(args.input);
         default:
             throw new Error('Unsupported operation');
     }
 };
 
-const createProduct = async (input) => {
+const createProduct = async (input: ProductInput) => {
     const id = crypto.createHash('sha256').update(input.Name + Date.now()).digest('hex');
     const params = {
-        TableName: process.env.SINGLE_TABLE_NAME,
+        TableName: process.env.SINGLE_TABLE_NAME!,
         Item: {
             pk: 'PRODUCT#',
             sk: `PRODUCT#${id}`,
@@ -58,10 +82,10 @@ const createProduct = async (input) => {
     }
 }
 
-const createCategory = async (input) => {
+const createCategory = async (input: CategoryInput) => {
     const id = crypto.createHash('sha256').update(input.Name + Date.now()).digest('hex');
     const params = {
-        TableName: process.env.SINGLE_TABLE_NAME,
+        TableName: process.env.SINGLE_TABLE_NAME!,
         Item: {
             pk: `CATEGORY#`,
             sk: `CATEGORY#${id}`,
@@ -81,10 +105,10 @@ const createCategory = async (input) => {
     }
 }
 
-const createSupplier = async (input) => {
+const createSupplier = async (input: SupplierInput) => {
     const id = crypto.createHash('sha256').update(input.Name + Date.now()).digest('hex');
     const params = {
-        TableName: process.env.SINGLE_TABLE_NAME,
+        TableName: process.env.SINGLE_TABLE_NAME!,
         Item: {
             pk: `SUPPLIER#`,
             sk: `SUPPLIER#${id}`,
@@ -103,11 +127,11 @@ const createSupplier = async (input) => {
     }
 }
 
-const updateProduct = async (input) => {
+const updateProduct = async (input: ProductInput & { Id: string }) => {
     const { Id, ...updatedInfo } = input;
-    const expressionAttributeNames = {};
-    const expressionAttributeValues = {};
-    const updateExpressionParts = [];
+    const expressionAttributeNames: { [key: string]: string } = {};
+    const expressionAttributeValues: { [key: string]: any } = {};
+    const updateExpressionParts: string[] = [];
 
     for (const [key, value] of Object.entries(updatedInfo)) {
         const attrNamePlaceholder = `#${key}`;
@@ -119,7 +143,7 @@ const updateProduct = async (input) => {
     }
 
     const params = {
-        TableName: process.env.SINGLE_TABLE_NAME,
+        TableName: process.env.SINGLE_TABLE_NAME!,
         Key: {
             pk: 'PRODUCT#',
             sk: `PRODUCT#${Id}`,
@@ -139,7 +163,7 @@ const updateProduct = async (input) => {
     }
 };
 
-const deleteProduct = async (input) => {
+const deleteProduct = async (input: { Id: string }) => {
     const params = {
         TableName: process.env.SINGLE_TABLE_NAME,
         Key: {
