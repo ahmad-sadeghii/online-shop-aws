@@ -15,6 +15,7 @@ import * as stepfunctions from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 
+
 export class AwsStack extends cdk.Stack {
   constructor(scope: cdk.App, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -90,9 +91,9 @@ export class AwsStack extends cdk.Stack {
     });
 
     // Step functions
-    const approvalLambda = new NodejsFunction(this, 'ApprovalLambda', {
+    const decisionLambda = new NodejsFunction(this, 'ApprovalLambda', {
       runtime: lambda.Runtime.NODEJS_16_X,
-      entry: 'lambda/shipment-approval.ts',
+      entry: 'lambda/shipmentDecision.ts',
       environment: {
         SINGLE_TABLE_NAME: table.tableName,
       },
@@ -106,7 +107,7 @@ export class AwsStack extends cdk.Stack {
       },
     });
 
-    const approvalLambdaIntegration = new apigateway.LambdaIntegration(approvalLambda, {
+    const approvalLambdaIntegration = new apigateway.LambdaIntegration(decisionLambda, {
       requestTemplates: { "application/json": '{ "statusCode": "200" }' },
     });
 
@@ -122,84 +123,135 @@ export class AwsStack extends cdk.Stack {
     });
 
     // Define the Lambda function to handle approval/rejection
-    const approvalHandlerLambda = new NodejsFunction(this, 'ApprovalHandlerLambda', {
+    const requestFeedbackLambda = new NodejsFunction(this, 'FeedbackRequestHandler', {
       runtime: lambda.Runtime.NODEJS_16_X,
-      entry: 'lambda/approvalHandler.ts',
+      entry: 'lambda/feedbackHandler.ts',
+      bundling: {
+        loader: {'.html': 'text'},
+      },
     });
 
-    const rejectedHandlerLambda = new NodejsFunction(this, 'RejectedHandlerLambda', {
+    const shipmentApprovedHandlerLambda = new NodejsFunction(this, 'ApprovalHandlerLambda', {
       runtime: lambda.Runtime.NODEJS_16_X,
-      entry: 'lambda/rejectedHandler.ts',
+      entry: 'lambda/shipmentApprovedHandler.ts',
+      bundling: {
+        loader: {'.html': 'text'},
+      },
+    });
+
+    const shipmentRejectedHandlerLambda = new NodejsFunction(this, 'RejectedHandlerLambda', {
+      runtime: lambda.Runtime.NODEJS_16_X,
+      entry: 'lambda/shipmentRejectedHandler.ts',
+      bundling: {
+        loader: {'.html': 'text'},
+      },
+      environment: {
+        SINGLE_TABLE_NAME: table.tableName,
+      }
     });
 
     // Define the State Machine
-    // const orderApprovalStateMachine = new stepfunctions.StateMachine(this, 'OrderApprovalStateMachine', {
-    //   definition: new tasks.LambdaInvoke(this, 'Send Confirmation Email', {
-    //     lambdaFunction: sendConfirmationEmailLambda,
-    //     integrationPattern: stepfunctions.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
-    //     payload: stepfunctions.TaskInput.fromObject({
-    //       'orderId.$': '$.orderId',
-    //       'customerName.$': '$.customerName',
-    //       "taskToken": stepfunctions.JsonPath.taskToken,
-    //     }),
-    //   })
-    //       .next(new stepfunctions.Wait(this, 'Wait for Approval', {
-    //         time: stepfunctions.WaitTime.duration(cdk.Duration.hours(48)),
-    //       }))
-    //       .next(new stepfunctions.Choice(this, 'Was Order Approved?')
-    //           .when(stepfunctions.Condition.stringEquals('$.Payload.result', 'approved'),
-    //               new stepfunctions.Pass(this, 'Order Approved')
-    //           )
-    //           .otherwise(new tasks.LambdaInvoke(this, 'Handle Rejection', {
-    //             lambdaFunction: approvalHandlerLambda,
-    //             payload: stepfunctions.TaskInput.fromObject({
-    //               'orderId.$': '$.orderId',
-    //               'approval': false,
-    //             }),
-    //           })
-    //               .next(new stepfunctions.Fail(this, 'Fail', { cause: 'Order was not approved' })))
-    //       ),
-    // });
+    const waitingForApproval = new tasks.LambdaInvoke(this, 'Waiting for Approval', {
+      lambdaFunction: sendConfirmationEmailLambda,
+      integrationPattern: stepfunctions.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
+      timeout: cdk.Duration.days(2),
+      payload: stepfunctions.TaskInput.fromObject({
+        'orderId.$': '$.orderId',
+        'customerName.$': '$.customerName',
+        "taskToken": stepfunctions.JsonPath.taskToken,
+      }),
+    });
+
+    const handleRejection = new tasks.LambdaInvoke(this, 'Timeout/Rejection Handling', {
+      lambdaFunction: shipmentRejectedHandlerLambda,
+      integrationPattern: stepfunctions.IntegrationPattern.REQUEST_RESPONSE,
+      payload: stepfunctions.TaskInput.fromObject({
+        'customerEmail.$': '$.customerEmail',
+        'orderId.$': '$.orderId',
+      }),
+    });
+
+    const waitForFeedback = new stepfunctions.Wait(this, 'Wait For Feedback', {
+      time: stepfunctions.WaitTime.duration(cdk.Duration.seconds(10)),
+    });
+
+    const requestFeedbackState = new tasks.LambdaInvoke(this, 'Request Feedback', {
+      lambdaFunction: requestFeedbackLambda,
+      integrationPattern: stepfunctions.IntegrationPattern.REQUEST_RESPONSE,
+      payload: stepfunctions.TaskInput.fromObject({
+        'customerEmail.$': '$.handleApprovalResult.Payload.customerEmail',
+      }),
+    });
+
+    const handleShipmentApproval = new tasks.LambdaInvoke(this, 'Shipment Confirmation', {
+      lambdaFunction: shipmentApprovedHandlerLambda,
+      integrationPattern: stepfunctions.IntegrationPattern.REQUEST_RESPONSE,
+      payload: stepfunctions.TaskInput.fromObject({
+        'orderId.$': '$.orderId',
+        'customerEmail.$': '$.customerEmail',
+      }),
+      resultPath: '$.handleApprovalResult',
+    })
+        .next(waitForFeedback)
+        .next(requestFeedbackState)
+        .next(new stepfunctions.Succeed(this, "End of Workflow"));
+
+    const choiceState = new stepfunctions.Choice(this, 'Did owner approve?')
+        .when(stepfunctions.Condition.stringEquals('$.result', 'approved'), handleShipmentApproval)
+        .otherwise(handleRejection);
+
+    waitingForApproval.next(choiceState);
+    waitingForApproval.addCatch(handleRejection, {
+      errors: ['States.TaskFailed', 'States.Timeout'],
+    });
+
 
     const orderApprovalStateMachine = new stepfunctions.StateMachine(this, 'OrderApprovalStateMachine', {
-      definition: new tasks.LambdaInvoke(this, 'Send Confirmation Email', {
-        lambdaFunction: sendConfirmationEmailLambda,
-        integrationPattern: stepfunctions.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
-        payload: stepfunctions.TaskInput.fromObject({
-          'orderId.$': '$.orderId',
-          'customerName.$': '$.customerName',
-          "taskToken": stepfunctions.JsonPath.taskToken,
-        }),
-      })
-          .next(new stepfunctions.Wait(this, 'Wait for Approval', {
-            time: stepfunctions.WaitTime.duration(cdk.Duration.hours(48)),
-          })
-              .next(new tasks.LambdaInvoke(this, 'Handle Rejection After Timeout', {
-                lambdaFunction: rejectedHandlerLambda,
-                payload: stepfunctions.TaskInput.fromObject({
-                  'orderId.$': '$.orderId',
-                  'approval': false,
-                }),
-              })
-                  .next(new stepfunctions.Choice(this, 'Was Order Approved?')
-                      .when(stepfunctions.Condition.stringEquals('$.Payload.result', 'approved'),
-                          new tasks.LambdaInvoke(this, 'Handle Approval', {
-                            lambdaFunction: approvalHandlerLambda,
-                            payload: stepfunctions.TaskInput.fromObject({
-                              'orderId.$': '$.orderId',
-                              'approval': true,
-                            }),
-                          })
-                      )
-                      .otherwise(new tasks.LambdaInvoke(this, 'Handle Rejection', {
-                        lambdaFunction: rejectedHandlerLambda,
-                        payload: stepfunctions.TaskInput.fromObject({
-                          'orderId.$': '$.orderId',
-                          'approval': false,
-                        }),
-                      }))
-                  ))),
+      definition: waitingForApproval,
     });
+
+    // Create a new SNS Topic to advance the state machine task (in order to prevent circular dependency)
+    const advanceTaskTopic = new sns.Topic(this, 'AdvanceTaskTopic');
+
+    const advanceTaskLambda = new NodejsFunction(this, 'AdvanceTaskLambda', {
+      runtime: lambda.Runtime.NODEJS_16_X,
+      entry: 'lambda/advanceTask.ts',
+      environment: {
+        STATE_MACHINE_ARN: orderApprovalStateMachine.stateMachineArn,
+      },
+    });
+
+    advanceTaskTopic.addSubscription(new snsSubscriptions.LambdaSubscription(advanceTaskLambda));
+
+    // Grant the necessary permissions
+    advanceTaskLambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['states:SendTaskSuccess', 'states:SendTaskFailure'],
+      resources: [orderApprovalStateMachine.stateMachineArn],
+    }));
+
+    sendConfirmationEmailLambda.addEnvironment("TASK_TOPIC_ARN", advanceTaskTopic.topicArn);
+    decisionLambda.addEnvironment("SNS_TOPIC_ARN", advanceTaskTopic.topicArn);
+
+    decisionLambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['SNS:Publish'],
+      resources: [advanceTaskTopic.topicArn],
+    }));
+
+    decisionLambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['dynamodb:GetItem'],
+      resources: [table.tableArn],
+    }));
+
+    shipmentRejectedHandlerLambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['dynamodb:DeleteItem'],
+      resources: [table.tableArn],
+    }));
+
+    sendConfirmationEmailLambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['SNS:Publish'],
+      resources: [advanceTaskTopic.topicArn],
+    }));
+
     // Create resolvers for the orders
     const orderHandler = new NodejsFunction(this, 'OrderHandler', {
       runtime: lambda.Runtime.NODEJS_16_X,
@@ -218,7 +270,7 @@ export class AwsStack extends cdk.Stack {
       statements: [
         new iam.PolicyStatement({
           actions: ['ses:SendEmail', 'ses:SendRawEmail'],
-          resources: ['*'],  // This allows sending emails to/from any email address
+          resources: ['*'],
           effect: iam.Effect.ALLOW,
         }),
       ],
@@ -226,6 +278,10 @@ export class AwsStack extends cdk.Stack {
 
     // Attach the policy to the Lambda function's role
     orderHandler.role?.attachInlinePolicy(sesPolicy);
+
+    shipmentApprovedHandlerLambda.role?.attachInlinePolicy(sesPolicy);
+    shipmentRejectedHandlerLambda.role?.attachInlinePolicy(sesPolicy);
+    requestFeedbackLambda.role?.attachInlinePolicy(sesPolicy);
 
     orderHandler.addToRolePolicy(new iam.PolicyStatement({
       actions: ['states:StartExecution'],

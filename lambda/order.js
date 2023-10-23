@@ -5,7 +5,6 @@ const Handlebars = require('handlebars');
 const ses = new AWS.SES();
 const sns = new AWS.SNS();
 import orderReceivedEmail from './templates/order-received-email.html';
-import shipmentApprovalNotification from './templates/shipment-approval-request.txt';
 
 exports.handler = async (event) => {
     console.log("New Event:", event);

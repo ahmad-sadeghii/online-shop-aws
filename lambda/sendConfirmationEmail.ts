@@ -24,4 +24,17 @@ export const handler = async (event: any) => {
         TopicArn: process.env.SHIPMENT_APPROVAL_TOPIC_ARN,
     };
     await sns.publish(snsParams).promise();
+
+    // const params = {
+    //     Message: JSON.stringify({ taskToken, outcome: 'SUCCESS', message: "Email sent successfully" }),
+    //     TopicArn: process.env.TASK_TOPIC_ARN,
+    // };
+    //
+    // await sns.publish(params).promise();
+
+    // await stepFunctions.sendTaskSuccess({
+    //     output: JSON.stringify({ message: "Email sent successfully" }),
+    //     taskToken
+    // }).promise();
+
 };
