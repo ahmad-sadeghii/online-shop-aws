@@ -432,6 +432,10 @@ export class AwsStack extends cdk.Stack {
       value: userPool.userPoolId,
     });
 
+    new cdk.CfnOutput(this, 'TableName', {
+      value: table.tableName,
+    });
+
     cdk.Tags.of(table).add("Owner", "ahmad.sadeghi@trilogy.com");
     cdk.Tags.of(mutationHandler).add("Owner", "ahmad.sadeghi@trilogy.com");
     cdk.Tags.of(queryHandler).add("Owner", "ahmad.sadeghi@trilogy.com");
